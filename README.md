@@ -1,10 +1,44 @@
 # Voxcordis
 
-Application mobile IA de dépistage cardiovasculaire par analyse vocale.
+Dépistage précoce du risque cardiovasculaire par analyse vocale : l'utilisateur enregistre sa voix depuis son téléphone, un modèle IA (YAMNet + classifieur) estime son niveau de risque. **L'inférence s'exécute toujours sur le téléphone** (TFLite), le backend servant à l'authentification et à la synchronisation.
 
-L'application utilise un modèle **YAMNet** (transféré depuis TensorFlow Hub) pour extraire des embeddings vocaux, puis un classifieur entraîné pour détecter des signes vocaux associés à des risques cardiovasculaires ou laryngés. L'inférence s'exécute **directement sur le téléphone** via TensorFlow Lite, avec un basculement automatique vers l'API distante quand Internet est disponible.
+| Composant | Techno | Dossier |
+|---|---|---|
+| API REST | Python · FastAPI · TensorFlow · SQLAlchemy · PostgreSQL/SQLite | `voxcordis-api/` |
+| Application mobile | Flutter (Android) · TensorFlow Lite · SQLite | `voxcordis_app/` |
+| Scripts | Export YAMNet TF Hub → TFLite | `scripts/` |
 
----
+> ⚠️ **Avertissement** : Voxcordis est un outil de dépistage uniquement. Il ne constitue pas un diagnostic médical. Les résultats doivent être interprétés par un professionnel de santé qualifié.
+
+## Fonctionnalités
+
+- **Compte** : inscription / connexion avec ou sans Internet (SQLite local en fallback), authentification JWT.
+- **Guide vocal** : 3 étapes illustrées pour bien enregistrer.
+- **Enregistrement** : 3 secondes, WAV 16 kHz mono.
+- **Analyse** : inférence IA locale (TFLite) en temps réel, écran de chargement animé.
+- **Résultat** : badge de risque (Faible / Modéré / Élevé), message personnalisé, recommandation, export PDF.
+- **Historique** : filtres par niveau de risque, suppression, export PDF.
+- **Synchronisation en ligne** : les analyses locales sont envoyées au backend en arrière-plan quand l'utilisateur est connecté (voir ci-dessous).
+
+## Aperçu
+
+> Déposez vos captures dans `docs/screenshots/` en respectant les noms de fichiers ci-dessous.
+
+### Mobile — application Voxcordis
+
+| Splash | Connexion | Inscription | Accueil | Guide |
+|---|---|---|---|---|
+| ![Splash](docs/screenshots/splash.jpeg) | ![Connexion](docs/screenshots/login.jpeg) | ![Inscription](docs/screenshots/register.jpeg) | ![Accueil](docs/screenshots/home.jpeg) | ![Guide](docs/screenshots/guide.jpeg) |
+
+| Enregistrement | Analyse | Résultat | Historique | Profil |
+|---|---|---|---|---|
+| ![Enregistrement](docs/screenshots/recording.jpeg) | ![Analyse](docs/screenshots/analysis.jpeg) | ![Résultat](docs/screenshots/result.jpeg) | ![Historique](docs/screenshots/history.jpeg) | ![Profil](docs/screenshots/profile.jpeg) |
+
+### Rapport PDF
+
+| Export PDF |
+|---|
+| ![Rapport PDF](docs/screenshots/pdf-report.jpeg) |
 
 ## Architecture
 
@@ -23,26 +57,26 @@ voxcordis/
 │   └── assets/models/                  # Modèles TFLite + scaler
 │
 ├── voxcordis-api/        # Backend FastAPI (Python)
-│   ├── main.py                        # FastAPI app
+│   ├── main.py                         # FastAPI app
 │   ├── core/
-│   │   ├── model.py                   # Chargement & inférence Keras
-│   │   ├── preprocessing.py           # YAMNet + extraction embedding
-│   │   ├── risk.py                    # Logique de risque
-│   │   └── auth.py                    # JWT auth
-│   ├── routers/                       # Endpoints (/predict, /auth, /history)
-│   └── models/                        # Modèles Keras entraînés
+│   │   ├── model.py                    # Chargement & inférence Keras
+│   │   ├── preprocessing.py            # YAMNet + extraction embedding
+│   │   ├── risk.py                     # Logique de risque
+│   │   └── auth.py                     # JWT auth
+│   ├── routers/                        # Endpoints (/auth, /analysis/predict, /analysis/sync, /analysis/history)
+│   └── models/                         # Modèles Keras entraînés
 │
-└── scripts/             # Scripts utilitaires
-    └── export_yamnet_tflite.py        # Export YAMNet hub → TFLite
+├── docs/screenshots/     # Captures d'écran du README
+│
+└── scripts/
+    └── export_yamnet_tflite.py         # Export YAMNet hub → TFLite
 ```
 
----
-
-## Pipeline d'inférence
+### Pipeline d'inférence (locale, sur le téléphone)
 
 ```
 Microphone (16 kHz)
-    ↓ Enregistrement 3s WAV
+    ↓ Enregistrement 3 s WAV
 RMS Normalization
     ↓
 YAMNet (TFLite) → Embedding [6, 1024]
@@ -56,126 +90,87 @@ Classifier (TFLite) → Probabilités [Healthy, Laryngeal, Cardiac]
 Résultat + Risque + Recommandation
 ```
 
-**Deux modes de fonctionnement :**
+### Modes de fonctionnement
 
-| Mode | Condition | Chemin |
-|------|-----------|--------|
-| **Online** | Internet + Token JWT | WAV → Backend FastAPI → YAMNet (TF Hub) → Keras → BDD |
-| **Offline** | Pas Internet / pas de token | WAV → TFLite natif (YAMNet + Classifier) → SQLite local |
+| Mode | Condition | Rôle |
+|---|---|---|
+| **Local** (toujours) | Aucune connexion requise | WAV → TFLite natif (YAMNet + Classifier) → SQLite local |
+| **En ligne** | Internet + token JWT | Authentification backend + synchronisation des résultats (`/analysis/sync`) + historique distant (`/analysis/history`) |
 
-Le basculement est automatique : si l'API répond et que l'utilisateur est authentifié, l'analyse passe par le backend. Sinon, elle s'exécute localement sur le téléphone. Si l'appel API échoue, un fallback offline est déclenché.
+L'analyse est **toujours effectuée localement** : le mode en ligne ne remplace pas l'inférence, il ajoute la synchronisation. Si le backend est injoignable ou l'utilisateur non authentifié, l'application reste pleinement fonctionnelle en local. Le endpoint serveur `/analysis/predict` existe toujours, mais l'application mobile ne l'utilise pas.
 
----
+## Modèle
 
-## Fonctionnalités
-
-- **Inscription / Connexion** — avec ou sans Internet (SQLite local en fallback)
-- **Guide vocal** — 3 étapes illustrées pour bien enregistrer
-- **Enregistrement 3 secondes** — WAV 16 kHz, mono
-- **Analyse en temps réel** — écran de loading avec animation
-- **Résultat** — badge de risque, message personnalisé, recommandation médicale
-- **Export PDF** — rapport d'analyse partageable
-- **Historique** — filtres par risque, suppression, export PDF
-- **Auto-switch online/offline** — transparent pour l'utilisateur
-- **Backend REST** — FastAPI avec authentification JWT et base PostgreSQL/SQLite
-
----
+- **YAMNet** : modèle Google pré-entraîné sur AudioSet, utilisé comme extracteur d'embeddings (1024 dimensions).
+- **Classifieur** : réseau de neurones entraîné par transfer learning sur des bases de données médicales vocales (SVD, PhysioNet).
+- **TFLite** : modèles quantifiés (float16) pour l'inférence mobile.
+- **3 classes** : Healthy (risque faible), Laryngeal (risque modéré), Cardiac (risque élevé).
+- **Performances** : test accuracy **76,39 %** (train 84 %, validation 76 %).
 
 ## Stack technique
 
 ### Mobile (Flutter — Dart)
 
 | Technologie | Rôle |
-|-------------|------|
+|---|---|
 | `provider` | State management |
 | `record` | Enregistrement audio WAV |
 | `sqflite` | Base SQLite locale |
-| `permission_handler` | Permissions microphone |
+| `permission_handler` | Permission microphone |
 | `http` | Communication avec l'API |
 | `pdf` / `printing` | Génération et partage PDF |
 | `intl` | Dates en français |
-| `tensorflow-lite:2.17.0` | Inférence TFLite native Android (Java/Kotlin) |
-| `tflite_native_service` | Plugin Dart ↔ Kotlin bridge |
+| `tensorflow-lite:2.17.0` | Inférence TFLite native Android |
+| `tflite_native_service` | Pont Dart ↔ Kotlin |
 
 ### Backend (Python — FastAPI)
 
 | Technologie | Rôle |
-|-------------|------|
-| `FastAPI` | Framework REST |
-| `TensorFlow 2.20.0` | YAMNet + classifieur Keras |
-| `TensorFlow Hub` | Modèle YAMNet pré-entraîné |
-| `librosa` | Chargement audio |
-| `joblib` | Scaler standardisation |
-| `SQLAlchemy` | ORM base de données |
-| `python-jose` | JWT authentication |
-| `bcrypt` | Hash des mots de passe |
+|---|---|
+| FastAPI | Framework REST |
+| TensorFlow 2.20.0 | YAMNet + classifieur Keras |
+| TensorFlow Hub | YAMNet pré-entraîné |
+| librosa | Chargement audio |
+| joblib | Scaler de standardisation |
+| SQLAlchemy | ORM |
+| python-jose | Authentification JWT |
+| bcrypt | Hash des mots de passe |
 
-### Modèle
+## Démarrage rapide
 
-- **YAMNet** : modèle Google pré-entraîné sur AudioSet, utilisé comme extracteur d'embeddings (1024 dimensions)
-- **Classifieur** : réseau de neurones entraîné par transfer learning sur bases de données médicales vocales
-- **TFLite** : modèles quantifiés (float16) pour l'inférence mobile
-- **3 classes** : Healthy (bas risque), Laryngeal (risque modéré), Cardiac (risque élevé)
-
----
-
-## Installation & développement
-
-### Prérequis
-
-- Flutter SDK ≥ 3.9
-- Android SDK (API 34+)
-- JDK 11+
-- Python ≥ 3.10
-- Appareil Android physique (pour les tests)
-
-### Backend (API)
+**Prérequis** : Flutter SDK ≥ 3.9 · Android SDK (API 34+) · JDK 11+ · Python ≥ 3.10 · appareil Android physique.
 
 ```bash
+# Backend
 cd voxcordis-api
-python -m venv venv
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Variables d'environnement (optionnel)
-export SECRET_KEY="votre-clé-secrète"
-export DATABASE_URL="sqlite:///voxcordis.db"
-
-# Lancer
 uvicorn main:app --host 0.0.0.0 --port 7860 --reload
-```
 
-Documentation automatique : http://localhost:7860/docs
-
-### Application mobile
-
-```bash
+# Application mobile
 cd voxcordis_app
 flutter pub get
-
-# Mode debug (backend local)
-flutter run
-
-# Mode release (backend distant)
-flutter build apk --release
+flutter run                      # debug → backend local
+flutter build apk --release      # release → backend distant
 ```
 
-Le fichier `main.dart` bascule automatiquement :
-- **`flutter run`** (debug) → backend local `http://192.168.100.139:7860`
-- **`flutter build apk --release`** → backend distant `https://voxcordis-api.onrender.com`
+- API : http://localhost:7860 · Swagger : http://localhost:7860/docs
+- Connecter le téléphone au backend local : `adb reverse tcp:7860 tcp:7860`
+- Le mode de build choisit automatiquement le backend : `flutter run` → backend local, `flutter build apk --release` → `https://voxcordis-api.onrender.com`.
 
-Pour connecter le téléphone au backend local :
-```bash
-adb reverse tcp:7860 tcp:7860
-```
+Variables d'environnement du backend :
 
----
+| Variable | Description |
+|---|---|
+| `SECRET_KEY` | Clé secrète JWT (obligatoire en prod) |
+| `DATABASE_URL` | URL PostgreSQL ou SQLite |
+| `ALLOWED_ORIGINS` | Origines CORS autorisées |
+| `MODEL_PATH` | Chemin du modèle Keras |
+| `SCALER_PATH` | Chemin du scaler joblib |
 
 ## Déploiement
 
-### Backend (Render)
-
-Le backend est déployé sur Render. La branche `backend` est celle déployée.
+**Backend (Render)** — la branche `backend` est celle déployée :
 
 ```bash
 git checkout backend
@@ -183,45 +178,29 @@ git merge develop
 git push origin backend
 ```
 
-Variables d'environnement requises :
-
-| Variable | Description |
-|----------|-------------|
-| `SECRET_KEY` | Clé secrète JWT (obligatoire en prod) |
-| `DATABASE_URL` | URL PostgreSQL ou SQLite |
-| `ALLOWED_ORIGINS` | Origines CORS autorisées |
-| `MODEL_PATH` | Chemin du modèle Keras |
-| `SCALER_PATH` | Chemin du scaler joblib |
-
-### Application mobile (Play Store)
+**Application mobile (Play Store)** :
 
 1. Générer une keystore : `keytool -genkey -v -keystore upload-keystore.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000`
 2. Configurer les clés dans `android/key.properties`
 3. Builder : `flutter build appbundle --release`
-4. L'`app-release.aab` est dans `build/app/outputs/bundle/release/`
-
----
+4. Le fichier `app-release.aab` est dans `build/app/outputs/bundle/release/`
 
 ## Scripts utiles
 
 ```bash
-# Exporter YAMNet depuis TF Hub vers TFLite
-python scripts/export_yamnet_tflite.py
-
-# Lancer le backend
-./start_backend.sh
+python scripts/export_yamnet_tflite.py   # Export YAMNet TF Hub → TFLite
+./start_backend.sh                       # Lancer le backend
 ```
 
----
+## Contexte académique
 
-## Avertissement
-
-**Voxcordis est un outil de dépistage uniquement.** Il ne constitue pas un diagnostic médical. Les résultats doivent être interprétés par un professionnel de santé qualifié. En cas de doute, consultez un médecin.
-
----
+Projet de thèse de licence — Burkina Institute of Technology (BIT), année académique 2025-2026.
+Supervision : Dr. Delwendé Lebian Serge Wilfried NIKIEMA.
 
 ## Auteur
 
-**VEBAMBA A Carine** — carinecontact.dev@gmail.com
+VEBAMBA A. Carine — carinecontact.dev@gmail.com
 
-Licence MIT.
+## Licence
+
+MIT
