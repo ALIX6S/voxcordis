@@ -154,29 +154,8 @@ flutter run                      # debug → backend local
 flutter build apk --release      # release → backend distant
 ```
 
-- API : http://localhost:7860 · Swagger : http://localhost:7860/docs
 - Connecter le téléphone au backend local : `adb reverse tcp:7860 tcp:7860`
 - Le mode de build choisit automatiquement le backend : `flutter run` → backend local, `flutter build apk --release` → `https://voxcordis-api.onrender.com`.
-
-Variables d'environnement du backend :
-
-| Variable | Description |
-|---|---|
-| `SECRET_KEY` | Clé secrète JWT (obligatoire en prod) |
-| `DATABASE_URL` | URL PostgreSQL ou SQLite |
-| `ALLOWED_ORIGINS` | Origines CORS autorisées |
-| `MODEL_PATH` | Chemin du modèle Keras |
-| `SCALER_PATH` | Chemin du scaler joblib |
-
-## Déploiement
-
-**Backend (Render)** — la branche `backend` est celle déployée :
-
-```bash
-git checkout backend
-git merge develop
-git push origin backend
-```
 
 **Application mobile (Play Store)** :
 
